@@ -1,0 +1,19 @@
+[project]
+name = "self-correcting-sql-agent"
+version = "0.1.0"
+description = "Natural-language SQL agent with self-correction and read-only guardrails"
+requires-python = ">>=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
