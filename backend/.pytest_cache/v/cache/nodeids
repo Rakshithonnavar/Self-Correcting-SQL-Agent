@@ -1,1 +1,24 @@
-[]
+[
+  "tests/test_schema_introspector.py::test_detects_all_tables",
+  "tests/test_schema_introspector.py::test_detects_columns_and_types",
+  "tests/test_schema_introspector.py::test_detects_foreign_key",
+  "tests/test_schema_introspector.py::test_detects_not_null",
+  "tests/test_schema_introspector.py::test_detects_primary_key",
+  "tests/test_schema_introspector.py::test_introspection_is_schema_agnostic",
+  "tests/test_schema_introspector.py::test_prompt_text_can_be_filtered_to_subset",
+  "tests/test_schema_introspector.py::test_prompt_text_includes_foreign_keys",
+  "tests/test_schema_introspector.py::test_to_dict_round_trips_structure",
+  "tests/test_seed_data.py::test_custom_volumes_are_respected",
+  "tests/test_seed_data.py::test_cvss_matches_severity_band",
+  "tests/test_seed_data.py::test_default_volumes_meet_plan",
+  "tests/test_seed_data.py::test_different_seed_produces_different_data",
+  "tests/test_seed_data.py::test_fixed_vulns_have_fixed_date_and_others_do_not",
+  "tests/test_seed_data.py::test_foreign_keys_are_satisfied_after_seeding",
+  "tests/test_seed_data.py::test_introspector_sees_all_eight_tables",
+  "tests/test_seed_data.py::test_models_metadata_matches_expected_tables",
+  "tests/test_seed_data.py::test_only_failed_or_blocked_runs_have_defects",
+  "tests/test_seed_data.py::test_refuses_to_seed_non_empty_database_without_reset",
+  "tests/test_seed_data.py::test_reset_replaces_existing_data",
+  "tests/test_seed_data.py::test_same_seed_produces_identical_data",
+  "tests/test_seed_data.py::test_seeded_row_counts_match_generator"
+]
