@@ -79,3 +79,17 @@ def test_generate_sql_can_use_responder_for_dynamic_answers(simple_schema):
     llm = FakeLLMClient(responder=responder)
     sql = generate_sql("How many critical assets?", simple_schema, llm)
     assert "WHERE criticality = 'critical'" in sql
+
+def test_extract_sql_removes_stray_tags_and_duplicate_statement():
+    # Real malformed output seen from Gemini during a live /query test.
+    raw = "SELECT count(*) FROM Assets</comment>\nSELECT count(*) FROM Assets</comment>"
+    assert extract_sql(raw) == "SELECT count(*) FROM Assets"
+
+
+def test_extract_sql_keeps_only_first_statement():
+    assert extract_sql("SELECT a FROM t; DROP TABLE t;") == "SELECT a FROM t"
+
+
+def test_extract_sql_keeps_multiline_select_intact():
+    raw = "SELECT a\nFROM t\nWHERE a = 1"
+    assert extract_sql(raw) == "SELECT a\nFROM t\nWHERE a = 1"
