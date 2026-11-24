@@ -119,6 +119,26 @@ def test_models_metadata_matches_expected_tables():
     assert set(Base.metadata.tables.keys()) == EXPECTED_TABLES
 
 
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    """get_settings() is @lru_cache'd process-wide; these tests change
+    DATABASE_URL via the environment, so the cache must not leak a stale
+    Settings instance into this test or into tests that run after it."""
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def test_resolve_database_url_prefers_an_explicit_cli_url(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///./should_not_be_used.db")
+    assert _resolve_database_url("sqlite:///./explicit.db") == "sqlite:///./explicit.db"
+
+
+def test_resolve_database_url_falls_back_to_settings_when_omitted(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///./from_dotenv.db")
+    assert _resolve_database_url(None) == "sqlite:///./from_dotenv.db"
+
+
 def test_custom_volumes_are_respected():
     small = SeedVolumes(users=3, assets=4, test_cases_per_asset=1, test_runs=20,
                         scans=5, vulnerabilities=10)
