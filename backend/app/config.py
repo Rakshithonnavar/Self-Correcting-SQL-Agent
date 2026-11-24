@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     max_rows: int = 100
     query_timeout_seconds: int = 10
     max_correction_attempts: int = 3
+    schema_selection_max_tables: int = 6
 
     def cors_origin_list(self) -> list[str]:
         """CORS_ORIGINS is a single comma-separated string in .env; split it here."""
