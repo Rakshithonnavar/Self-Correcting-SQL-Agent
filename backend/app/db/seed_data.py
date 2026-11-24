@@ -26,6 +26,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db.models import (
     Asset,
     Base,
