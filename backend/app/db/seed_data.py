@@ -3,6 +3,7 @@ Step 1: deterministic synthetic data generator for the AppSec Testing &
 Vulnerability Tracker sample database.
 
 Usage (from backend/):
+    python -m app.db.seed_data --reset                         #uses DATABASE_URL from .env
     python -m app.db.seed_data --url sqlite:///./dev.db
     python -m app.db.seed_data --url sqlite:///./dev.db --seed 42 --reset
 
