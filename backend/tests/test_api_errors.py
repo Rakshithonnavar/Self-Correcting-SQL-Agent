@@ -32,6 +32,17 @@ def seeded_engine():
     return engine
 
 
+@pytest.fixture
+def empty_engine():
+    """A reachable database with no tables at all — distinct from a
+    database the app can't connect to."""
+    return create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+
 def _client_with_llm(seeded_engine, llm):
     app.dependency_overrides[get_engine] = lambda: seeded_engine
     app.dependency_overrides[get_llm_client] = lambda: llm
