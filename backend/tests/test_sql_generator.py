@@ -8,6 +8,7 @@ no cost, deterministic.
 import pytest
 from sqlalchemy import create_engine, text
 
+from app.core.errors import SQLGenerationError
 from app.core.llm_client import FakeLLMClient
 from app.core.schema_introspector import get_schema_snapshot
 from app.core.sql_generator import build_prompt, extract_sql, generate_sql
@@ -66,7 +67,7 @@ def test_generate_sql_passes_question_and_schema_to_llm(simple_schema):
 
 def test_generate_sql_raises_on_empty_response(simple_schema):
     llm = FakeLLMClient(response="   ")
-    with pytest.raises(ValueError, match="empty SQL"):
+    with pytest.raises(SQLGenerationError, match="empty SQL"):
         generate_sql("question", simple_schema, llm)
 
 

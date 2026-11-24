@@ -5,9 +5,18 @@ Naive version: question in, SQL out, SQL executed, result (or error) back.
 No retry (Step 4), no guardrails (Step 5), no validation (Step 6) yet.
 Those steps will modify what this endpoint calls, not its route shape.
 
-Note: kept at /query (no /api prefix). The repo's current README mentions
-/api/query, but that README is being treated as placeholder content for
-now (per instruction) and will be redefined later — not followed here.
+Error handling: generate_sql() can raise LLMError subclasses (quota
+exceeded, auth failure, provider unavailable, empty response) or
+SQLGenerationError. None of those are caught here — they propagate to the
+handlers registered in app/api/errors.py, which turn each into the right
+HTTP status and a client-safe JSON body. Catching them per-route would mean
+duplicating that mapping in every endpoint that calls the LLM.
+
+QueryExecutionError (a failed/invalid generated SQL statement) is handled
+differently and on purpose: Step 2 has no retry yet, so a bad query is a
+normal, expected outcome — it's reported in the response body's `error`
+field with a 200 status, not raised as an HTTP error. Step 4 will replace
+this with the self-correction loop.
 """
 
 from __future__ import annotations

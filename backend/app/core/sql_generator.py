@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 
+from app.core.errors import SQLGenerationError
 from app.core.llm_client import LLMClient
 from app.core.schema_introspector import SchemaSnapshot
 
@@ -81,12 +82,11 @@ def generate_sql(
 ) -> str:
     """
     Question + schema -> SQL string. No execution, no retry — that is
-    Steps 4-6's job. Raises ValueError if the model returns nothing usable.
+    Steps 4-6's job. Raises SQLGenerationError if the model returns nothing usable.
     """
     prompt = build_prompt(question, schema, only_tables=only_tables)
     raw_response = llm.generate(prompt)
     sql = extract_sql(raw_response)
     if not sql:
-        raise ValueError(f"LLM returned an empty SQL query for question: {question!r}")
+        raise SQLGenerationError(f"LLM returned an empty SQL query for question: {question!r}")
     return sql
-
