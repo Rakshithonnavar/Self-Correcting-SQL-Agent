@@ -43,8 +43,8 @@ def empty_engine():
     )
 
 
-def _client_with_llm(seeded_engine, llm):
-    app.dependency_overrides[get_engine] = lambda: seeded_engine
+def _client_with_llm(engine, llm):
+    app.dependency_overrides[get_engine] = lambda: engine
     app.dependency_overrides[get_llm_client] = lambda: llm
     return TestClient(app, raise_server_exceptions=False)
 
@@ -92,6 +92,17 @@ def test_llm_unavailable_returns_503(seeded_engine):
 
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "llm_unavailable"
+
+
+def test_empty_schema_returns_503_without_calling_the_llm(empty_engine):
+    def responder(_prompt: str) -> str:
+        raise AssertionError("the LLM must not be called when the schema is empty")
+
+    client = _client_with_llm(empty_engine, FakeLLMClient(responder=responder))
+    response = client.post("/query", json={"question": "how many assets?"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "schema_empty"
 
 
 def test_unexpected_exception_returns_generic_500_without_leaking_detail(seeded_engine):
