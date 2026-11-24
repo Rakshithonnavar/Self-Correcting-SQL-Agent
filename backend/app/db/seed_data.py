@@ -360,14 +360,30 @@ def seed_database(engine: Engine, seed: int = 42, reset: bool = False) -> dict[s
     return {key: len(value) for key, value in rows.items()}
 
 
+def _resolve_database_url(cli_url: str | None) -> str:
+    """
+    An explicit --url always wins. Otherwise fall back to DATABASE_URL from
+    backend/.env — the same setting the running app uses — so
+    `python -m app.db.seed_data --reset` seeds the database the server will
+    actually read from, instead of needing the URL retyped every time.
+    """
+    return cli_url or get_settings().database_url
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed the sample AppSec tracker database.")
-    parser.add_argument("--url", required=True, help="SQLAlchemy database URL")
+    parser.add_argument(
+        "--url",
+        default=None,
+        help="SQLAlchemy database URL (defaults to DATABASE_URL from backend/.env)",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--reset", action="store_true", help="Drop and recreate tables first")
     args = parser.parse_args()
 
-    engine = create_engine(args.url)
+    url = _resolve_database_url(args.url)
+    print(f"Seeding {url} ...")
+    engine = create_engine(url)
     counts = seed_database(engine, seed=args.seed, reset=args.reset)
     for table, count in counts.items():
         print(f"{table}: {count}")
