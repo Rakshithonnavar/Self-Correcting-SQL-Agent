@@ -9,9 +9,10 @@ and the Step 0 introspector sees all 8 tables in a seeded database.
 import pytest
 from sqlalchemy import create_engine, text
 
+from app.config import get_settings
 from app.core.schema_introspector import get_schema_snapshot
 from app.db.models import Base
-from app.db.seed_data import SeedVolumes, generate, seed_database
+from app.db.seed_data import SeedVolumes, _resolve_database_url, generate, seed_database
 
 EXPECTED_TABLES = {
     "users", "assets", "test_cases", "test_runs", "defects",
