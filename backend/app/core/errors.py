@@ -13,19 +13,6 @@ detail, so the API layer never sends them to clients verbatim.
 
 from __future__ import annotations
 
-from app.core.errors import (
-    AgentError,
-    DatabaseUnavailableError,
-    EmptySchemaError,
-    LLMAuthError,
-    LLMConfigurationError,
-    LLMEmptyResponseError,
-    LLMError,
-    LLMQuotaExceededError,
-    LLMUnavailableError,
-    SQLGenerationError,
-)
-
 
 class AgentError(Exception):
     """Base class for expected, domain-level failures."""
@@ -76,14 +63,7 @@ class SQLGenerationError(AgentError):
 class DatabaseUnavailableError(AgentError):
     """The target database could not be reached or inspected."""
 
-    (
-        EmptySchemaError,
-        503,
-        "schema_empty",
-        "The connected database has no tables yet. Seed or migrate it before querying.",
-        logging.WARNING,
-    ),
-    
+
 class EmptySchemaError(AgentError):
     """The database was reached and introspected, but has no tables.
     Distinct from DatabaseUnavailableError: the connection is fine, there's
