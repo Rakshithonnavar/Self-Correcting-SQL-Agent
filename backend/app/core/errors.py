@@ -68,3 +68,12 @@ class EmptySchemaError(AgentError):
     """The database was reached and introspected, but has no tables.
     Distinct from DatabaseUnavailableError: the connection is fine, there's
     just nothing to query yet (for example, before the demo data is seeded)."""
+
+
+class UnsafeSQLError(AgentError):
+    """Generated SQL was not a read-only SELECT/WITH statement and was
+    blocked before it ever reached the database. See app/core/sql_safety.py.
+    In normal operation this is caught and corrected inside Step 4's
+    self-correction loop (app/core/correction_loop.py) and never reaches
+    the API layer; it's still mapped in app/api/errors.py as a fail-safe
+    in case it's ever raised somewhere that loop doesn't wrap."""
