@@ -89,6 +89,13 @@ _RULES: tuple[tuple[type[AgentError], int, str, str, int], ...] = (
         logging.ERROR,
     ),
     (
+        EmptySchemaError,
+        503,
+        "schema_empty",
+        "The connected database has no tables yet. Seed or migrate it before querying.",
+        logging.WARNING,
+    ),
+    (
         LLMError,
         502,
         "llm_error",
