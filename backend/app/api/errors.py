@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 from app.core.errors import (
     AgentError,
     DatabaseUnavailableError,
+    EmptySchemaError,
     LLMAuthError,
     LLMConfigurationError,
     LLMEmptyResponseError,
