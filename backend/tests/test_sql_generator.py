@@ -11,7 +11,13 @@ from sqlalchemy import create_engine, text
 from app.core.errors import SQLGenerationError
 from app.core.llm_client import FakeLLMClient
 from app.core.schema_introspector import get_schema_snapshot
-from app.core.sql_generator import build_prompt, extract_sql, generate_sql
+from app.core.sql_generator import (
+    build_correction_prompt,
+    build_prompt,
+    extract_sql,
+    generate_corrected_sql,
+    generate_sql,
+)
 
 
 @pytest.fixture
@@ -94,3 +100,49 @@ def test_extract_sql_keeps_only_first_statement():
 def test_extract_sql_keeps_multiline_select_intact():
     raw = "SELECT a\nFROM t\nWHERE a = 1"
     assert extract_sql(raw) == "SELECT a\nFROM t\nWHERE a = 1"
+
+# --- Step 4: correction prompt ----------------------------------------------
+
+
+def test_build_correction_prompt_includes_failed_sql_and_error(simple_schema):
+    prompt = build_correction_prompt(
+        "How many assets?",
+        simple_schema,
+        failed_sql="SELECT * FROM asets",
+        error_message="no such table: asets",
+    )
+    assert "How many assets?" in prompt
+    assert "SELECT * FROM asets" in prompt
+    assert "no such table: asets" in prompt
+    assert "TABLE assets" in prompt  # schema is still included
+
+
+def test_build_correction_prompt_respects_table_filter(simple_schema):
+    prompt = build_correction_prompt(
+        "question",
+        simple_schema,
+        failed_sql="SELECT * FROM asets",
+        error_message="no such table",
+        only_tables=["assets"],
+    )
+    assert "TABLE assets" in prompt
+
+
+def test_generate_corrected_sql_returns_cleaned_sql(simple_schema):
+    llm = FakeLLMClient(response="```sql\nSELECT * FROM assets\n```")
+    sql = generate_corrected_sql(
+        "question",
+        simple_schema,
+        llm,
+        failed_sql="SELECT * FROM asets",
+        error_message="no such table",
+    )
+    assert sql == "SELECT * FROM assets"
+
+
+def test_generate_corrected_sql_raises_on_empty_response(simple_schema):
+    llm = FakeLLMClient(response="   ")
+    with pytest.raises(SQLGenerationError, match="empty corrected SQL"):
+        generate_corrected_sql(
+            "question", simple_schema, llm, failed_sql="SELECT 1", error_message="some error"
+        )

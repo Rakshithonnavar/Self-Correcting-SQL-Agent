@@ -31,6 +31,7 @@ from app.core.errors import (
     LLMQuotaExceededError,
     LLMUnavailableError,
     SQLGenerationError,
+    UnsafeSQLError,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,18 @@ _RULES: tuple[tuple[type[AgentError], int, str, str, int], ...] = (
         "schema_empty",
         "The connected database has no tables yet. Seed or migrate it before querying.",
         logging.WARNING,
+    ),
+    (
+        # In normal operation Step 4's correction loop catches this itself
+        # and never lets it reach here (see app/core/correction_loop.py).
+        # This entry is a fail-safe: if it's ever raised somewhere that
+        # loop doesn't wrap, the response is still a deliberate 400, not a
+        # fall-through 500, and it's logged loudly enough to investigate.
+        UnsafeSQLError,
+        400,
+        "unsafe_sql_blocked",
+        "The generated query was not a safe, read-only SELECT statement and was blocked.",
+        logging.ERROR,
     ),
     (
         LLMError,

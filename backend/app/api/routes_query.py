@@ -2,36 +2,34 @@
 POST /query — the text-to-SQL endpoint.
 
 Step 2 gave this a naive, no-retry version: question in, SQL out, SQL
-executed, result (or error) back. No self-correction (Step 4), no
-guardrails (Step 5), no validation (Step 6) yet — those steps will change
-what this endpoint calls, not its route shape.
+executed, result (or error) back.
 
-Step 3 adds smart schema selection: instead of handing the LLM every table
-on every question, app/core/schema_selector.py scores tables against the
-question's own words and keeps only the relevant ones (plus anything
-directly joined to them). This matters once a real org's schema has
-hundreds of tables — it doesn't change behavior noticeably on the 8-table
-demo database, but it's exercised here the same way it would be in
-production, and it's schema-agnostic like everything else in this agent.
+Step 3 added smart schema selection (app/core/schema_selector.py), so the
+LLM sees only the tables relevant to the question, plus anything directly
+joined to them, instead of the full schema on every call — and a guard
+against an empty schema, raised before the LLM is ever called.
 
-Step 3 also adds a guard for an empty schema: a reachable but table-less
-database (for example, before the demo data has been seeded) is a clear,
-actionable error rather than letting the LLM guess at table names that
-don't exist and surfacing a confusing SQL error instead.
+Step 4 replaces the "run it once" execution with
+app.core.correction_loop.generate_and_execute_with_correction(): a failing
+or unsafe query is fed back to the model, with its exact error, for up to
+settings.max_correction_attempts tries. Schema introspection and table
+selection still happen once per request here, not once per attempt — only
+the correction loop's internal retries regenerate the SQL itself.
 
-Error handling: get_schema_snapshot() and generate_sql() can raise
-EmptySchemaError, or LLMError subclasses (quota exceeded, auth failure,
+Error handling: get_schema_snapshot() and the correction loop can raise
+EmptySchemaError, LLMError subclasses (quota exceeded, auth failure,
 provider unavailable, empty response), or SQLGenerationError. None of
 those are caught here — they propagate to the handlers registered in
 app/api/errors.py, which turn each into the right HTTP status and a
 client-safe JSON body. Catching them per-route would mean duplicating
 that mapping in every endpoint that calls the LLM.
 
-QueryExecutionError (a failed/invalid generated SQL statement) is handled
-differently and on purpose: there's no retry yet, so a bad query is a
-normal, expected outcome — it's reported in the response body's `error`
-field with a 200 status, not raised as an HTTP error. Step 4 will replace
-this with the self-correction loop.
+A query that still fails after every correction attempt is NOT raised as
+an HTTP error: it's reported in the response body's `error` field with a
+200 status, exactly as a single failing query was reported before Step 4
+existed. The `attempts` field tells the caller how many tries it took (1
+means it worked first try; anything higher means self-correction kicked
+in).
 """
 
 from __future__ import annotations
@@ -41,12 +39,11 @@ from pydantic import BaseModel
 from sqlalchemy.engine import Engine
 
 from app.config import Settings, get_settings
+from app.core.correction_loop import generate_and_execute_with_correction
 from app.core.errors import EmptySchemaError
 from app.core.llm_client import LLMClient
-from app.core.query_executor import QueryExecutionError, execute_query
 from app.core.schema_introspector import get_schema_snapshot
 from app.core.schema_selector import select_relevant_tables
-from app.core.sql_generator import generate_sql
 from app.db.connection import get_engine
 from app.dependencies import get_llm_client
 
@@ -64,6 +61,7 @@ class QueryResponse(BaseModel):
     rows: list[dict] = []
     row_count: int = 0
     error: str | None = None
+    attempts: int = 1
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -82,17 +80,28 @@ def run_query(
     only_tables = select_relevant_tables(
         request.question, schema, max_tables=settings.schema_selection_max_tables
     )
-    sql = generate_sql(request.question, schema, llm, only_tables=only_tables)
+    outcome = generate_and_execute_with_correction(
+        question=request.question,
+        schema=schema,
+        llm=llm,
+        engine=engine,
+        only_tables=only_tables,
+        max_attempts=settings.max_correction_attempts,
+    )
 
-    try:
-        result = execute_query(sql, engine)
-    except QueryExecutionError as exc:
-        return QueryResponse(question=request.question, sql=sql, error=str(exc.original_error))
+    if outcome.result is None:
+        return QueryResponse(
+            question=request.question,
+            sql=outcome.final_sql,
+            error=outcome.error,
+            attempts=outcome.attempt_count,
+        )
 
     return QueryResponse(
         question=request.question,
-        sql=sql,
-        columns=result.columns,
-        rows=result.rows,
-        row_count=result.row_count,
+        sql=outcome.final_sql,
+        columns=outcome.result.columns,
+        rows=outcome.result.rows,
+        row_count=outcome.result.row_count,
+        attempts=outcome.attempt_count,
     )
