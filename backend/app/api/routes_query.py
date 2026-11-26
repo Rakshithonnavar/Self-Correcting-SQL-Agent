@@ -16,6 +16,13 @@ settings.max_correction_attempts tries. Schema introspection and table
 selection still happen once per request here, not once per attempt — only
 the correction loop's internal retries regenerate the SQL itself.
 
+Step 5 passes settings.max_rows and settings.query_timeout_seconds into
+that same call: the correction loop now validates the generated SQL
+(single read-only SELECT, only known tables), caps how many rows come
+back, and cancels a query that runs too long — all enforced on every
+attempt, not just the first. The response's `truncated` field tells the
+caller when more rows existed than settings.max_rows allows back.
+
 Error handling: get_schema_snapshot() and the correction loop can raise
 EmptySchemaError, LLMError subclasses (quota exceeded, auth failure,
 provider unavailable, empty response), or SQLGenerationError. None of
@@ -62,6 +69,7 @@ class QueryResponse(BaseModel):
     row_count: int = 0
     error: str | None = None
     attempts: int = 1
+    truncated: bool = False
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -87,6 +95,8 @@ def run_query(
         engine=engine,
         only_tables=only_tables,
         max_attempts=settings.max_correction_attempts,
+        max_rows=settings.max_rows,
+        timeout_seconds=settings.query_timeout_seconds,
     )
 
     if outcome.result is None:
@@ -104,4 +114,5 @@ def run_query(
         rows=outcome.result.rows,
         row_count=outcome.result.row_count,
         attempts=outcome.attempt_count,
+        truncated=outcome.truncated,
     )

@@ -71,9 +71,19 @@ class EmptySchemaError(AgentError):
 
 
 class UnsafeSQLError(AgentError):
-    """Generated SQL was not a read-only SELECT/WITH statement and was
-    blocked before it ever reached the database. See app/core/sql_safety.py.
-    In normal operation this is caught and corrected inside Step 4's
-    self-correction loop (app/core/correction_loop.py) and never reaches
-    the API layer; it's still mapped in app/api/errors.py as a fail-safe
-    in case it's ever raised somewhere that loop doesn't wrap."""
+    """Generated SQL failed Step 5's guardrails in app/core/sql_safety.py:
+    it wasn't a single read-only SELECT/WITH statement, or it referenced a
+    table outside the connected database's own schema. Blocked before it
+    ever reached the database. In normal operation this is caught and
+    corrected inside Step 4's self-correction loop
+    (app/core/correction_loop.py) and never reaches the API layer; it's
+    still mapped in app/api/errors.py as a fail-safe in case it's ever
+    raised somewhere that loop doesn't wrap."""
+
+class QueryTimeoutError(AgentError):
+    """A generated query was still running after Step 5's execution
+    timeout and was cancelled. Distinct from QueryExecutionError (the
+    database rejected the query outright) and from LLMUnavailableError
+    (the LLM, not the database, was slow): this means the database
+    itself is taking too long on an otherwise-valid-looking query,
+    usually because it scans far more data than the question needed."""

@@ -30,6 +30,7 @@ from app.core.errors import (
     LLMError,
     LLMQuotaExceededError,
     LLMUnavailableError,
+    QueryTimeoutError,
     SQLGenerationError,
     UnsafeSQLError,
 )
@@ -107,6 +108,15 @@ _RULES: tuple[tuple[type[AgentError], int, str, str, int], ...] = (
         "unsafe_sql_blocked",
         "The generated query was not a safe, read-only SELECT statement and was blocked.",
         logging.ERROR,
+    ),
+    (
+        # Same fail-safe reasoning as UnsafeSQLError above: the correction
+        # loop normally retries this itself and it shouldn't reach here.
+        QueryTimeoutError,
+        504,
+        "query_timeout",
+        "The query took too long to run and was cancelled. Try a more specific question.",
+        logging.WARNING,
     ),
     (
         LLMError,

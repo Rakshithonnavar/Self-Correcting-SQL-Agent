@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
+from app.config import Settings, get_settings
 from app.core.llm_client import FakeLLMClient
 from app.db.connection import get_engine
 from app.dependencies import get_llm_client
@@ -58,7 +59,9 @@ def test_query_endpoint_returns_rows(client):
     response = test_client.post("/query", json={"question": "Show me all assets"})
     assert response.status_code == 200
     body = response.json()
-    assert body["sql"] == "SELECT * FROM assets"
+    # Step 5's guardrail rewrites the SQL to cap its result size, so the
+    # executed statement carries a LIMIT the model didn't write.
+    assert body["sql"] == "SELECT * FROM assets LIMIT 101"
     assert body["row_count"] == 1
     assert body["rows"] == [{"id": 1, "name": "payments-api"}]
     assert body["error"] is None
@@ -80,6 +83,7 @@ def test_query_endpoint_returns_error_on_bad_sql(client):
     assert body["error"] is not None
     assert body["rows"] == []
 
+
 def test_query_endpoint_self_corrects_a_bad_table_name(client):
     test_client, fake_llm = client
     responses = iter(["SELECT * FROM asets", "SELECT * FROM assets"])
@@ -91,7 +95,7 @@ def test_query_endpoint_self_corrects_a_bad_table_name(client):
     body = response.json()
     assert body["error"] is None
     assert body["row_count"] == 1
-    assert body["sql"] == "SELECT * FROM assets"
+    assert body["sql"] == "SELECT * FROM assets LIMIT 101"
     assert body["attempts"] == 2
 
 
@@ -109,13 +113,34 @@ def test_query_endpoint_blocks_an_unsafe_generated_statement(client, seeded_engi
     assert response.status_code == 200  # exhausted corrections -> reported in body, not raised
     body = response.json()
     assert body["error"] is not None
-    assert "not a read-only SELECT" in body["error"]
+    assert "read-only SELECT" in body["error"]
 
     # Confirms the unsafe statement never reached the database, by
     # checking the row directly rather than through the same fake LLM
     # (which would just produce the same blocked statement again).
     with seeded_engine.connect() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM assets")).scalar() == 1
+
+
+def test_query_endpoint_reports_truncated_rows(client, seeded_engine):
+    test_client, fake_llm = client
+    with seeded_engine.begin() as conn:
+        for i in range(2, 6):
+            conn.execute(
+                text("INSERT INTO assets (id, name) VALUES (:id, :name)"),
+                {"id": i, "name": f"asset-{i}"},
+            )
+    fake_llm._response = "SELECT * FROM assets"
+
+    app.dependency_overrides[get_settings] = lambda: Settings(max_rows=3)
+    response = test_client.post("/query", json={"question": "show all assets"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["truncated"] is True
+    assert body["row_count"] == 3
+    assert len(body["rows"]) == 3
+
 
 def test_query_endpoint_requires_question_field(client):
     # Uses the overridden `client` fixture (not a bare TestClient) so this

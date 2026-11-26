@@ -7,3 +7,4 @@ google-genai>=1.0,<2
 python-dotenv>=1.0,<2
 httpx>=0.27,<1
 pytest>=8,<9
+sqlglot>=30.0,<31

@@ -8,12 +8,22 @@ Uses the same StaticPool in-memory engine pattern as test_api_query.py —
 see that file for why StaticPool is required with FastAPI's TestClient.
 """
 
+import asyncio
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
+from starlette.requests import Request
 
-from app.core.errors import LLMQuotaExceededError, LLMUnavailableError
+from app.api.errors import handle_agent_error
+from app.core.errors import (
+    LLMQuotaExceededError,
+    LLMUnavailableError,
+    QueryTimeoutError,
+    UnsafeSQLError,
+)
 from app.core.llm_client import FakeLLMClient
 from app.db.connection import get_engine
 from app.dependencies import get_llm_client
@@ -43,8 +53,8 @@ def empty_engine():
     )
 
 
-def _client_with_llm(engine, llm):
-    app.dependency_overrides[get_engine] = lambda: engine
+def _client_with_llm(seeded_engine, llm):
+    app.dependency_overrides[get_engine] = lambda: seeded_engine
     app.dependency_overrides[get_llm_client] = lambda: llm
     return TestClient(app, raise_server_exceptions=False)
 
@@ -103,6 +113,38 @@ def test_empty_schema_returns_503_without_calling_the_llm(empty_engine):
 
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "schema_empty"
+
+
+def _make_request() -> Request:
+    """A minimal Starlette Request, enough for handle_agent_error's logging
+    (request.method, request.url.path) - no real HTTP connection needed."""
+    return Request({"type": "http", "method": "POST", "path": "/query", "headers": []})
+
+
+def test_unsafe_sql_error_fail_safe_mapping():
+    """UnsafeSQLError is normally caught and corrected entirely inside
+    app.core.correction_loop and never reaches this handler (see that
+    module's docstring) - this tests the fail-safe mapping directly,
+    rather than trying to force one past the loop through the full route."""
+    response = asyncio.run(
+        handle_agent_error(_make_request(), UnsafeSQLError("blocked for testing"))
+    )
+    assert response.status_code == 400
+    body = json.loads(response.body)["detail"]
+    assert body["code"] == "unsafe_sql_blocked"
+    assert "blocked for testing" not in response.body.decode()
+
+
+def test_query_timeout_error_fail_safe_mapping():
+    """Same reasoning as test_unsafe_sql_error_fail_safe_mapping above:
+    the correction loop normally retries this itself."""
+    response = asyncio.run(
+        handle_agent_error(_make_request(), QueryTimeoutError("took too long for testing"))
+    )
+    assert response.status_code == 504
+    body = json.loads(response.body)["detail"]
+    assert body["code"] == "query_timeout"
+    assert "took too long for testing" not in response.body.decode()
 
 
 def test_unexpected_exception_returns_generic_500_without_leaking_detail(seeded_engine):
