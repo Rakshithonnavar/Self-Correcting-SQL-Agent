@@ -23,6 +23,13 @@ back, and cancels a query that runs too long — all enforced on every
 attempt, not just the first. The response's `truncated` field tells the
 caller when more rows existed than settings.max_rows allows back.
 
+Step 6 (Phase 1) calls populate_sample_values() right after table
+selection, so the schema shown to the model for the *selected* tables
+carries each low-cardinality text column's real distinct values (e.g.
+severity's actual 'critical', not a guessed 'Critical'). This runs once
+per request, before the correction loop starts, so every attempt -
+including retries - sees the same hints.
+
 Error handling: get_schema_snapshot() and the correction loop can raise
 EmptySchemaError, LLMError subclasses (quota exceeded, auth failure,
 provider unavailable, empty response), or SQLGenerationError. None of
@@ -49,7 +56,7 @@ from app.config import Settings, get_settings
 from app.core.correction_loop import generate_and_execute_with_correction
 from app.core.errors import EmptySchemaError
 from app.core.llm_client import LLMClient
-from app.core.schema_introspector import get_schema_snapshot
+from app.core.schema_introspector import get_schema_snapshot, populate_sample_values
 from app.core.schema_selector import select_relevant_tables
 from app.db.connection import get_engine
 from app.dependencies import get_llm_client
@@ -88,6 +95,13 @@ def run_query(
     only_tables = select_relevant_tables(
         request.question, schema, max_tables=settings.schema_selection_max_tables
     )
+    if settings.schema_sample_values_enabled:
+        populate_sample_values(
+            engine,
+            schema,
+            only_tables=only_tables,
+            max_distinct=settings.schema_sample_values_max_distinct,
+        )
     outcome = generate_and_execute_with_correction(
         question=request.question,
         schema=schema,

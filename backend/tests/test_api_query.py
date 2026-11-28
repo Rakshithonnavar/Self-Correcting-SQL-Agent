@@ -142,6 +142,73 @@ def test_query_endpoint_reports_truncated_rows(client, seeded_engine):
     assert len(body["rows"]) == 3
 
 
+# --- Step 6: sample-value hints wired into the request -------------------
+
+
+def test_query_endpoint_includes_sample_value_hints_in_the_prompt():
+    """Step 6: a low-cardinality text column's real values must reach the
+    model's prompt, so it stops guessing a plausible-looking value like
+    'Critical' when the data actually stores 'critical'."""
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE assets (id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+                "criticality TEXT)"
+            )
+        )
+        for i, crit in enumerate(["low", "medium", "high", "critical"], start=1):
+            conn.execute(
+                text("INSERT INTO assets (id, name, criticality) VALUES (:id, :name, :crit)"),
+                {"id": i, "name": f"asset-{i}", "crit": crit},
+            )
+
+    fake_llm = FakeLLMClient(response="SELECT * FROM assets")
+    app.dependency_overrides[get_engine] = lambda: engine
+    app.dependency_overrides[get_llm_client] = lambda: fake_llm
+    try:
+        test_client = TestClient(app)
+        test_client.post("/query", json={"question": "show me all assets"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert len(fake_llm.calls) == 1
+    assert "[values:" in fake_llm.calls[0]
+    assert "critical" in fake_llm.calls[0]
+
+
+def test_query_endpoint_can_disable_sample_value_hints_via_settings():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE assets (id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+                "criticality TEXT)"
+            )
+        )
+        conn.execute(text("INSERT INTO assets (id, name, criticality) VALUES (1, 'a', 'critical')"))
+
+    fake_llm = FakeLLMClient(response="SELECT * FROM assets")
+    app.dependency_overrides[get_engine] = lambda: engine
+    app.dependency_overrides[get_llm_client] = lambda: fake_llm
+    app.dependency_overrides[get_settings] = lambda: Settings(schema_sample_values_enabled=False)
+    try:
+        test_client = TestClient(app)
+        test_client.post("/query", json={"question": "show me all assets"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert "[values:" not in fake_llm.calls[0]
+
+
 def test_query_endpoint_requires_question_field(client):
     # Uses the overridden `client` fixture (not a bare TestClient) so this
     # test checks ONLY request validation, without also exercising the

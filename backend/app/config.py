@@ -42,7 +42,22 @@ class Settings(BaseSettings):
     max_rows: int = 100
     query_timeout_seconds: int = 10
     max_correction_attempts: int = 3
+    # Step 3: cap on how many tables go into the prompt after schema
+    # selection. Keep below the demo DB's 8 tables so selection actually
+    # does something here; a real org's schema is where this earns its keep.
     schema_selection_max_tables: int = 6
+
+    # Step 6: sample-value hints. For each low-cardinality text column
+    # (severity, status, criticality, ...) in the tables about to be
+    # prompted, show the model its real distinct values instead of letting
+    # it guess one ('Critical' vs the actually-stored 'critical'). A
+    # column with more than schema_sample_values_max_distinct distinct
+    # values is treated as free text and left unsampled. See
+    # app.core.schema_introspector.populate_sample_values for the
+    # performance/security notes on what this queries and why it's safe
+    # to turn off against a larger production schema.
+    schema_sample_values_enabled: bool = True
+    schema_sample_values_max_distinct: int = 12
 
     def cors_origin_list(self) -> list[str]:
         """CORS_ORIGINS is a single comma-separated string in .env; split it here."""

@@ -12,7 +12,7 @@ failing against a *different* schema — see test_introspection_is_schema_agnost
 import pytest
 from sqlalchemy import create_engine, text
 
-from app.core.schema_introspector import get_schema_snapshot
+from app.core.schema_introspector import get_schema_snapshot, populate_sample_values
 
 
 def make_engine_with_schema(ddl_statements: list[str]):
@@ -25,8 +25,9 @@ def make_engine_with_schema(ddl_statements: list[str]):
 
 @pytest.fixture
 def two_table_engine():
-    return make_engine_with_schema([
-        """
+    return make_engine_with_schema(
+        [
+            """
         CREATE TABLE assets (
             id INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
@@ -34,7 +35,7 @@ def two_table_engine():
             criticality TEXT
         )
         """,
-        """
+            """
         CREATE TABLE vulnerabilities (
             id INTEGER PRIMARY KEY,
             asset_id INTEGER NOT NULL,
@@ -43,7 +44,8 @@ def two_table_engine():
             FOREIGN KEY (asset_id) REFERENCES assets(id)
         )
         """,
-    ])
+        ]
+    )
 
 
 def test_detects_all_tables(two_table_engine):
@@ -112,14 +114,15 @@ def test_introspection_is_schema_agnostic():
     schema (different names, different table count, different FK direction)
     and confirm it still works without touching the introspector's source.
     """
-    engine = make_engine_with_schema([
-        """
+    engine = make_engine_with_schema(
+        [
+            """
         CREATE TABLE customers (
             customer_id INTEGER PRIMARY KEY,
             email TEXT NOT NULL
         )
         """,
-        """
+            """
         CREATE TABLE orders (
             order_id INTEGER PRIMARY KEY,
             customer_id INTEGER NOT NULL,
@@ -127,7 +130,7 @@ def test_introspection_is_schema_agnostic():
             FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
         )
         """,
-        """
+            """
         CREATE TABLE order_items (
             item_id INTEGER PRIMARY KEY,
             order_id INTEGER NOT NULL,
@@ -135,7 +138,8 @@ def test_introspection_is_schema_agnostic():
             FOREIGN KEY (order_id) REFERENCES orders(order_id)
         )
         """,
-    ])
+        ]
+    )
 
     snapshot = get_schema_snapshot(engine)
 
@@ -144,3 +148,109 @@ def test_introspection_is_schema_agnostic():
     assert orders_fk.references_table == "customers"
     items_fk = snapshot.tables["order_items"].foreign_keys[0]
     assert items_fk.references_table == "orders"
+
+
+# --- Step 6: populate_sample_values -----------------------------------------
+
+
+@pytest.fixture
+def engine_with_data():
+    """Same shape as two_table_engine, but seeded with real rows: a
+    repeated, low-cardinality `criticality`/`severity` column (the kind
+    Step 6 should hint), and a `title` column with as many distinct
+    values as rows (the kind it should leave alone as free text)."""
+    engine = make_engine_with_schema(
+        [
+            """
+        CREATE TABLE assets (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            criticality TEXT
+        )
+        """,
+            """
+        CREATE TABLE vulnerabilities (
+            id INTEGER PRIMARY KEY,
+            asset_id INTEGER NOT NULL,
+            severity TEXT NOT NULL,
+            title TEXT,
+            FOREIGN KEY (asset_id) REFERENCES assets(id)
+        )
+        """,
+        ]
+    )
+    levels = ["low", "medium", "high", "critical"]
+    with engine.begin() as conn:
+        for i in range(1, 21):
+            conn.execute(
+                text("INSERT INTO assets (id, name, criticality) VALUES (:id, :name, :crit)"),
+                {"id": i, "name": f"asset-{i}", "crit": levels[i % len(levels)]},
+            )
+        for i in range(1, 51):
+            conn.execute(
+                text(
+                    "INSERT INTO vulnerabilities (id, asset_id, severity, title) "
+                    "VALUES (:id, :asset_id, :sev, :title)"
+                ),
+                {
+                    "id": i,
+                    "asset_id": ((i - 1) % 20) + 1,
+                    "sev": levels[i % len(levels)],
+                    "title": f"unique finding #{i}",  # distinct every row
+                },
+            )
+    return engine
+
+
+def test_populate_sample_values_fills_low_cardinality_text_column(engine_with_data):
+    schema = get_schema_snapshot(engine_with_data)
+    populate_sample_values(engine_with_data, schema, max_distinct=12)
+    crit_col = next(c for c in schema.tables["assets"].columns if c.name == "criticality")
+    assert crit_col.sample_values == ["critical", "high", "low", "medium"]
+
+
+def test_populate_sample_values_leaves_free_text_column_unsampled(engine_with_data):
+    schema = get_schema_snapshot(engine_with_data)
+    populate_sample_values(engine_with_data, schema, max_distinct=12)
+    title_col = next(c for c in schema.tables["vulnerabilities"].columns if c.name == "title")
+    assert title_col.sample_values is None
+
+
+def test_populate_sample_values_never_samples_a_primary_key(engine_with_data):
+    schema = get_schema_snapshot(engine_with_data)
+    populate_sample_values(engine_with_data, schema, max_distinct=12)
+    id_col = next(c for c in schema.tables["assets"].columns if c.name == "id")
+    assert id_col.sample_values is None
+
+
+def test_populate_sample_values_respects_only_tables(engine_with_data):
+    schema = get_schema_snapshot(engine_with_data)
+    populate_sample_values(engine_with_data, schema, only_tables=["assets"], max_distinct=12)
+    crit_col = next(c for c in schema.tables["assets"].columns if c.name == "criticality")
+    sev_col = next(c for c in schema.tables["vulnerabilities"].columns if c.name == "severity")
+    assert crit_col.sample_values is not None
+    assert sev_col.sample_values is None  # vulnerabilities was excluded from only_tables
+
+
+def test_populate_sample_values_is_a_noop_without_any_data(two_table_engine):
+    # Columns exist but no rows were ever inserted - must not raise, and
+    # must leave every column unsampled (0 rows is not "fits within budget").
+    schema = get_schema_snapshot(two_table_engine)
+    populate_sample_values(two_table_engine, schema, max_distinct=12)
+    for table in schema.tables.values():
+        for column in table.columns:
+            assert column.sample_values is None
+
+
+def test_prompt_text_renders_sample_values_when_present(engine_with_data):
+    schema = get_schema_snapshot(engine_with_data)
+    populate_sample_values(engine_with_data, schema, max_distinct=12)
+    prompt_text = schema.to_prompt_text()
+    assert "criticality TEXT [values: critical, high, low, medium]" in prompt_text
+
+
+def test_prompt_text_omits_value_hint_when_never_sampled(two_table_engine):
+    # Sampling never ran against this schema - no column should render a hint.
+    snapshot = get_schema_snapshot(two_table_engine)
+    text_out = snapshot.to_prompt_text()
+    assert "[values:" not in text_out
