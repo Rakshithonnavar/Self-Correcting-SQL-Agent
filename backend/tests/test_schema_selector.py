@@ -44,7 +44,9 @@ def shop_schema() -> SchemaSnapshot:
         name="orders",
         columns=[_col("id", pk=True), _col("customer_id"), _col("order_date")],
         foreign_keys=[
-            ForeignKeyInfo(column="customer_id", references_table="customers", references_column="id")
+            ForeignKeyInfo(
+                column="customer_id", references_table="customers", references_column="id"
+            )
         ],
     )
     reviews = TableInfo(
@@ -147,9 +149,7 @@ def test_never_exceeds_max_tables(shop_schema):
 
 
 def test_result_is_always_a_subset_of_schema_tables(shop_schema):
-    result = select_relevant_tables(
-        "orders and customers and products", shop_schema, max_tables=3
-    )
+    result = select_relevant_tables("orders and customers and products", shop_schema, max_tables=3)
     assert result is not None
     assert set(result).issubset(set(shop_schema.table_names()))
 

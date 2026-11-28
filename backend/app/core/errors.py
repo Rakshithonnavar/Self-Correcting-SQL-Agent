@@ -80,6 +80,7 @@ class UnsafeSQLError(AgentError):
     still mapped in app/api/errors.py as a fail-safe in case it's ever
     raised somewhere that loop doesn't wrap."""
 
+
 class QueryTimeoutError(AgentError):
     """A generated query was still running after Step 5's execution
     timeout and was cancelled. Distinct from QueryExecutionError (the

@@ -15,8 +15,14 @@ from app.db.models import Base
 from app.db.seed_data import SeedVolumes, _resolve_database_url, generate, seed_database
 
 EXPECTED_TABLES = {
-    "users", "assets", "test_cases", "test_runs", "defects",
-    "scans", "vulnerabilities", "scan_findings",
+    "users",
+    "assets",
+    "test_cases",
+    "test_runs",
+    "defects",
+    "scans",
+    "vulnerabilities",
+    "scan_findings",
 }
 
 
@@ -88,8 +94,7 @@ def test_foreign_keys_are_satisfied_after_seeding(seeded_engine):
 def test_seeded_row_counts_match_generator(seeded_engine):
     with seeded_engine.connect() as conn:
         counts = {
-            t: conn.execute(text(f"SELECT COUNT(*) FROM {t}")).scalar()
-            for t in EXPECTED_TABLES
+            t: conn.execute(text(f"SELECT COUNT(*) FROM {t}")).scalar() for t in EXPECTED_TABLES
         }
     assert counts["assets"] == 20
     assert counts["test_runs"] >= 500
@@ -140,8 +145,9 @@ def test_resolve_database_url_falls_back_to_settings_when_omitted(monkeypatch):
 
 
 def test_custom_volumes_are_respected():
-    small = SeedVolumes(users=3, assets=4, test_cases_per_asset=1, test_runs=20,
-                        scans=5, vulnerabilities=10)
+    small = SeedVolumes(
+        users=3, assets=4, test_cases_per_asset=1, test_runs=20, scans=5, vulnerabilities=10
+    )
     rows = generate(seed=42, volumes=small)
     assert len(rows["users"]) == 3
     assert len(rows["assets"]) == 4
