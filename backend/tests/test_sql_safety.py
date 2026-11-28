@@ -141,3 +141,108 @@ def test_dialect_for_engine_maps_known_sqlalchemy_dialects():
 def test_result_is_re_serialized_in_the_requested_dialect():
     rewritten = assert_safe_sql("SELECT * FROM assets", ALLOWED, max_rows=10, dialect="sqlite")
     assert "assets" in rewritten.lower()
+
+
+# --- Step 6 (Phase 2): known-value validation -------------------------------
+
+KNOWN_VALUES = {
+    "vulnerabilities": {"severity": ["critical", "high", "low", "medium"]},
+    "assets": {"criticality": ["high", "low", "medium"]},
+}
+
+
+def test_allows_a_literal_that_matches_a_known_value():
+    assert_safe_sql(
+        "SELECT * FROM vulnerabilities WHERE severity = 'critical'",
+        ALLOWED,
+        max_rows=100,
+        known_values=KNOWN_VALUES,
+    )  # must not raise
+
+
+def test_blocks_a_wrong_case_literal_against_a_known_value_column():
+    with pytest.raises(UnsafeSQLError, match="'Critical' is not a value"):
+        assert_safe_sql(
+            "SELECT * FROM vulnerabilities WHERE severity = 'Critical'",
+            ALLOWED,
+            max_rows=100,
+            known_values=KNOWN_VALUES,
+        )
+
+
+def test_error_message_names_the_real_valid_values():
+    with pytest.raises(UnsafeSQLError, match="critical, high, low, medium"):
+        assert_safe_sql(
+            "SELECT * FROM vulnerabilities WHERE severity = 'Critical'",
+            ALLOWED,
+            max_rows=100,
+            known_values=KNOWN_VALUES,
+        )
+
+
+def test_blocks_a_bad_literal_behind_a_table_alias():
+    with pytest.raises(UnsafeSQLError, match="not a value"):
+        assert_safe_sql(
+            "SELECT * FROM vulnerabilities v WHERE v.severity = 'Critical'",
+            ALLOWED,
+            max_rows=100,
+            known_values=KNOWN_VALUES,
+        )
+
+
+def test_blocks_a_bad_literal_inside_an_in_clause():
+    with pytest.raises(UnsafeSQLError, match="not a value"):
+        assert_safe_sql(
+            "SELECT * FROM vulnerabilities WHERE severity IN ('low', 'Critical')",
+            ALLOWED,
+            max_rows=100,
+            known_values=KNOWN_VALUES,
+        )
+
+
+def test_unqualified_column_is_resolved_across_an_unambiguous_join():
+    # "severity" only exists in vulnerabilities' known_values, so this must
+    # resolve correctly even though the column isn't qualified here.
+    with pytest.raises(UnsafeSQLError, match="not a value"):
+        assert_safe_sql(
+            "SELECT * FROM assets a JOIN vulnerabilities v ON a.id = v.asset_id "
+            "WHERE severity = 'Critical'",
+            ALLOWED,
+            max_rows=100,
+            known_values=KNOWN_VALUES,
+        )
+
+
+def test_ambiguous_unqualified_column_is_not_checked():
+    # Both tables have a "criticality"-shaped column in known_values here,
+    # so an unqualified reference is ambiguous and must be skipped rather
+    # than guessed - this must not raise, even with an unsampled casing.
+    ambiguous_values = {
+        "vulnerabilities": {"criticality": ["high", "low"]},
+        "assets": {"criticality": ["high", "low", "medium"]},
+    }
+    assert_safe_sql(
+        "SELECT * FROM assets JOIN vulnerabilities ON assets.id = vulnerabilities.asset_id "
+        "WHERE criticality = 'Nonsense'",
+        ALLOWED,
+        max_rows=100,
+        known_values=ambiguous_values,
+    )  # must not raise: cannot tell which table's column this is
+
+
+def test_column_with_no_known_values_is_not_checked():
+    # "status" isn't in KNOWN_VALUES at all - any literal is allowed.
+    assert_safe_sql(
+        "SELECT * FROM vulnerabilities WHERE status = 'anything-goes'",
+        ALLOWED,
+        max_rows=100,
+        known_values=KNOWN_VALUES,
+    )  # must not raise
+
+
+def test_known_values_defaults_to_no_validation():
+    # Without known_values, the exact same bad-casing query is allowed -
+    # confirms this check is strictly additive and opt-in.
+    assert_safe_sql(
+        "SELECT * FROM vulnerabilities WHERE severity = 'Critical'", ALLOWED, max_rows=100
+    )  # must not raise

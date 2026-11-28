@@ -209,6 +209,71 @@ def test_query_endpoint_can_disable_sample_value_hints_via_settings():
     assert "[values:" not in fake_llm.calls[0]
 
 
+def test_query_endpoint_self_corrects_a_bad_cased_literal():
+    """Step 6 (Phase 2), end to end: the endpoint samples 'criticality'
+    values via Phase 1's populate_sample_values, then Phase 2's guardrail
+    rejects the wrong-case literal and the correction loop retries with
+    the real one - all through the real route, not the loop directly."""
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE assets (id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+                "criticality TEXT)"
+            )
+        )
+        for i, crit in enumerate(["low", "medium", "high", "critical"], start=1):
+            conn.execute(
+                text("INSERT INTO assets (id, name, criticality) VALUES (:id, :name, :crit)"),
+                {"id": i, "name": f"asset-{i}", "crit": crit},
+            )
+
+    responses = iter(
+        [
+            "SELECT * FROM assets WHERE criticality = 'Critical'",  # wrong case
+            "SELECT * FROM assets WHERE criticality = 'critical'",  # corrected
+        ]
+    )
+    fake_llm = FakeLLMClient(responder=lambda _prompt: next(responses))
+    app.dependency_overrides[get_engine] = lambda: engine
+    app.dependency_overrides[get_llm_client] = lambda: fake_llm
+    try:
+        test_client = TestClient(app)
+        response = test_client.post("/query", json={"question": "show critical assets"})
+    finally:
+        app.dependency_overrides.clear()
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["error"] is None
+    assert body["attempts"] == 2
+    assert body["row_count"] == 1
+    assert body["zero_rows"] is False
+
+
+def test_query_endpoint_reports_zero_rows_on_a_genuinely_empty_result(client):
+    test_client, fake_llm = client
+    fake_llm._response = "SELECT * FROM assets WHERE id = 999999"
+
+    response = test_client.post("/query", json={"question": "find a nonexistent asset"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["error"] is None
+    assert body["row_count"] == 0
+    assert body["zero_rows"] is True
+
+
+def test_query_endpoint_reports_zero_rows_as_false_when_rows_exist(client):
+    test_client, _ = client
+    response = test_client.post("/query", json={"question": "show me all assets"})
+    assert response.json()["zero_rows"] is False
+
+
 def test_query_endpoint_requires_question_field(client):
     # Uses the overridden `client` fixture (not a bare TestClient) so this
     # test checks ONLY request validation, without also exercising the

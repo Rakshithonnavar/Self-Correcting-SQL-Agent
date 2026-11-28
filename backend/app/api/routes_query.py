@@ -30,6 +30,17 @@ severity's actual 'critical', not a guessed 'Critical'). This runs once
 per request, before the correction loop starts, so every attempt -
 including retries - sees the same hints.
 
+Step 6 (Phase 2) adds the other half of that fix: app.core.sql_safety now
+rejects a generated literal that doesn't match one of those sampled
+values (so a stray 'Critical' is corrected the same way a bad table name
+is, rather than silently matching nothing), and this route reports
+`zero_rows` whenever a *successful* query came back with no rows at all.
+zero_rows is not itself an error - a question can legitimately have no
+matching data - it's a hint to a human or a future eval harness that this
+particular answer is worth a second look, since an empty result is also
+exactly what an unnoticed value or filter mismatch looks like from the
+outside.
+
 Error handling: get_schema_snapshot() and the correction loop can raise
 EmptySchemaError, LLMError subclasses (quota exceeded, auth failure,
 provider unavailable, empty response), or SQLGenerationError. None of
@@ -77,6 +88,7 @@ class QueryResponse(BaseModel):
     error: str | None = None
     attempts: int = 1
     truncated: bool = False
+    zero_rows: bool = False
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -129,4 +141,5 @@ def run_query(
         row_count=outcome.result.row_count,
         attempts=outcome.attempt_count,
         truncated=outcome.truncated,
+        zero_rows=outcome.result.row_count == 0,
     )

@@ -18,7 +18,7 @@ from app.core.errors import (
     SQLGenerationError,
 )
 from app.core.llm_client import FakeLLMClient
-from app.core.schema_introspector import get_schema_snapshot
+from app.core.schema_introspector import get_schema_snapshot, populate_sample_values
 
 
 @pytest.fixture
@@ -285,6 +285,42 @@ def test_does_not_report_truncated_when_under_the_limit(seeded_engine, schema):
     )
     assert outcome.truncated is False
     assert outcome.result.row_count == 1
+
+
+def test_corrects_a_bad_cased_literal_using_sampled_values(seeded_engine, schema):
+    """Step 6 (Phase 2): a literal that doesn't match a column's real
+    sampled values is corrected the same way a bad table name is. This
+    mirrors what routes_query.py does in production: populate_sample_values
+    runs against `schema` before the loop starts, so the loop picks up the
+    same known_values on every attempt without recomputing them."""
+    with seeded_engine.begin() as conn:
+        conn.execute(text("ALTER TABLE assets ADD COLUMN criticality TEXT"))
+        conn.execute(text("UPDATE assets SET criticality = 'high' WHERE id = 1"))
+    # The `schema` fixture was introspected before the ALTER above, so it
+    # has no `criticality` column yet - re-introspect so the new column
+    # (and its values) are actually there to sample.
+    schema = get_schema_snapshot(seeded_engine)
+    populate_sample_values(seeded_engine, schema, max_distinct=12)
+
+    responses = iter(
+        [
+            "SELECT * FROM assets WHERE criticality = 'High'",  # wrong case
+            "SELECT * FROM assets WHERE criticality = 'high'",  # corrected
+        ]
+    )
+
+    def responder(_prompt: str) -> str:
+        return next(responses)
+
+    llm = FakeLLMClient(responder=responder)
+    outcome = generate_and_execute_with_correction(
+        "show critical assets", schema, llm, seeded_engine, max_attempts=3
+    )
+
+    assert outcome.error is None
+    assert outcome.attempt_count == 2
+    assert "'High' is not a value" in outcome.attempts[0].error
+    assert "high" in llm.calls[1]  # the correction prompt names the real value
 
 
 def test_corrects_a_query_that_times_out(seeded_engine, schema):

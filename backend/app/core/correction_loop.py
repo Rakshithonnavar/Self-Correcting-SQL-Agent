@@ -18,13 +18,20 @@ went wrong and let it try again" treatment as a plain syntax error.
 Scope and safety boundaries, deliberately drawn here:
   - Three kinds of failure are corrected: the generated SQL executed but
     the database rejected it (QueryExecutionError); the generated SQL
-    failed a guardrail — wrong statement type, an unknown table, or
-    unparsable (UnsafeSQLError); or it ran too long and was cancelled
+    failed a guardrail — wrong statement type, an unknown table, an
+    unparsable statement, or (Step 6, Phase 2) a string literal that
+    doesn't match any of a column's real sampled values (all
+    UnsafeSQLError); or it ran too long and was cancelled
     (QueryTimeoutError). All three mean "the model wrote something that
     didn't work" — exactly what self-correction is for. A timeout is
     corrected rather than treated as a dead end because a narrower query
     (a filter, a smaller join) genuinely can fix it, unlike a provider
     outage.
+  - Step 6's known_values (built below, from the same `schema` object
+    passed in) is just the per-column value hints: "what counts as a
+    valid severity" never changes between attempt 1 and attempt 3 of the
+    same request, so, like allowed_tables, it's computed once per request
+    rather than recomputed per attempt.
   - LLM-provider failures (quota exceeded, auth, unavailable, empty
     response) and SQLGenerationError (nothing usable extracted from the
     raw response) are NOT retried here. They propagate immediately, same
@@ -131,6 +138,19 @@ def generate_and_execute_with_correction(
 
     allowed_tables = set(schema.table_names())
     dialect = dialect_for_engine(engine)
+    # Step 6 (Phase 2): {table_name: {column_name: [real values]}}, built
+    # once from whatever populate_sample_values() already filled in on
+    # `schema` (routes_query.py calls it before this loop starts). A table
+    # or column with no sampled values just doesn't appear here, which
+    # assert_safe_sql treats as "nothing to check" for it.
+    known_values: dict[str, dict[str, list[str]]] = {
+        table_name.lower(): {
+            column.name.lower(): column.sample_values
+            for column in table.columns
+            if column.sample_values
+        }
+        for table_name, table in schema.tables.items()
+    }
 
     sql = generate_sql(question, schema, llm, only_tables=only_tables)
     attempts: list[CorrectionAttempt] = []
@@ -144,7 +164,9 @@ def generate_and_execute_with_correction(
         # actually sent to the database.
         attempted_sql = sql
         try:
-            safe_sql = assert_safe_sql(sql, allowed_tables, max_rows, dialect=dialect)
+            safe_sql = assert_safe_sql(
+                sql, allowed_tables, max_rows, dialect=dialect, known_values=known_values
+            )
             attempted_sql = safe_sql
             result = execute_query_with_timeout(safe_sql, engine, timeout_seconds)
         except _CorrectableError as exc:
